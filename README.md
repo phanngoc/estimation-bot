@@ -28,6 +28,12 @@ pip install -e .
 
 ## Usage
 
+### Run application streamlit
+
+```
+python est_egg/run_app.py
+```
+
 ### Command Line Interface
 
 ```bash

@@ -1,6 +1,10 @@
 import os
 import subprocess
 import sys
+from dotenv import load_dotenv
+load_dotenv('.env')
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+print('os.environ.get("OPENAI_API_KEY"):', os.environ["OPENAI_API_KEY"])
 
 def main():
     """Run the Streamlit app with the proper Python environment."""
