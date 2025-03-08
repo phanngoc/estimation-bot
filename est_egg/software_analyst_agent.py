@@ -206,29 +206,29 @@ Your output must follow the structure defined for a software analysis result wit
             result: The analysis result containing Mermaid diagrams
         """
         # Fix task diagram
-        if result.mermaid_task_diagram:
-            # Ensure proper graph definition at the start
-            if not re.match(r'^(graph|flowchart)\s+[TBLR]D', result.mermaid_task_diagram):
-                result.mermaid_task_diagram = "graph TD\n" + result.mermaid_task_diagram
+        # if result.mermaid_task_diagram:
+        #     # Ensure proper graph definition at the start
+        #     if not re.match(r'^(graph|flowchart)\s+[TBLR]D', result.mermaid_task_diagram):
+        #         result.mermaid_task_diagram = "graph TD\n" + result.mermaid_task_diagram
             
-        # Fix ERD diagram
-        if result.mermaid_erd_diagram:
-            # Ensure proper ERD definition
-            if not re.match(r'^erDiagram', result.mermaid_erd_diagram):
-                result.mermaid_erd_diagram = "erDiagram\n" + result.mermaid_erd_diagram
+        # # Fix ERD diagram
+        # if result.mermaid_erd_diagram:
+        #     # Ensure proper ERD definition
+        #     if not re.match(r'^erDiagram', result.mermaid_erd_diagram):
+        #         result.mermaid_erd_diagram = "erDiagram\n" + result.mermaid_erd_diagram
         
-        # Fix component diagram
-        if result.mermaid_component_diagram:
-            # Check component diagram syntax
-            if not any(re.match(r'^(graph|flowchart|classDiagram|C4Context)', result.mermaid_component_diagram)
-                      for pattern in [r'^graph', r'^flowchart', r'^classDiagram', r'^C4Context']):
-                result.mermaid_component_diagram = "flowchart TD\n" + result.mermaid_component_diagram
+        # # Fix component diagram
+        # if result.mermaid_component_diagram:
+        #     # Check component diagram syntax
+        #     if not any(re.match(r'^(graph|flowchart|classDiagram|C4Context)', result.mermaid_component_diagram)
+        #               for pattern in [r'^graph', r'^flowchart', r'^classDiagram', r'^C4Context']):
+        #         result.mermaid_component_diagram = "flowchart TD\n" + result.mermaid_component_diagram
         
-        # Fix sequence diagram
-        if result.mermaid_sequence_diagram:
-            # Check sequence diagram syntax
-            if not re.match(r'^sequenceDiagram', result.mermaid_sequence_diagram):
-                result.mermaid_sequence_diagram = "sequenceDiagram\n" + result.mermaid_sequence_diagram
+        # # Fix sequence diagram
+        # if result.mermaid_sequence_diagram:
+        #     # Check sequence diagram syntax
+        #     if not re.match(r'^sequenceDiagram', result.mermaid_sequence_diagram):
+        #         result.mermaid_sequence_diagram = "sequenceDiagram\n" + result.mermaid_sequence_diagram
         
         # Handle potentially None list fields by setting empty lists
         if result.task_breakdown is None:
