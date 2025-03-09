@@ -8,6 +8,9 @@ import pandas as pd
 import html
 import uuid
 from streamlit_markdown import st_markdown  # Import the streamlit-markdown package
+from est_egg.database_manager import DatabaseManager
+import json
+import datetime
 
 def display_task_hierarchy(tasks, level=0):
     """Render task breakdown as markdown with proper indentation"""
@@ -283,12 +286,121 @@ def render_diagrams(results):
     else:
         st.info("No sequence diagram available.")
 
+def load_query_from_db(query_id):
+    """Load analysis results from database by query ID"""
+    db = DatabaseManager()
+    query = db.get_query_by_id(query_id)
+    
+    if not query:
+        return False
+    
+    # Parse the result_data back into SoftwareAnalysisOutputSchema
+    result_data = query["result_data"]
+    
+    # We need to reconstruct the full object structure from the serialized data
+    from est_egg.software_analyst_agent import SoftwareAnalysisOutputSchema, TaskBreakdown, APIEndpoint, ERDEntity, DevelopmentComponent, ProcessFlow
+    
+    # Helper function to convert dictionaries back to their respective classes
+    def dict_to_task_breakdown(task_dict):
+        subtasks = []
+        if "subtasks" in task_dict and task_dict["subtasks"]:
+            subtasks = [dict_to_task_breakdown(subtask) for subtask in task_dict["subtasks"]]
+        
+        return TaskBreakdown(
+            task_id=task_dict.get("task_id", ""),
+            parent_id=task_dict.get("parent_id"),
+            task_name=task_dict.get("task_name", ""),
+            description=task_dict.get("description"),
+            difficulty=task_dict.get("difficulty"),
+            time_estimate=task_dict.get("time_estimate"),
+            subtasks=subtasks
+        )
+    
+    # Convert API endpoints
+    api_endpoints = []
+    if "api_analysis" in result_data:
+        for api in result_data["api_analysis"]:
+            api_endpoints.append(APIEndpoint(
+                endpoint=api.get("endpoint"),
+                method=api.get("method"),
+                purpose=api.get("purpose"),
+                request_params=api.get("request_params"),
+                response_structure=api.get("response_structure")
+            ))
+    
+    # Convert ERD entities
+    erd_entities = []
+    if "erd_analysis" in result_data:
+        for entity in result_data["erd_analysis"]:
+            erd_entities.append(ERDEntity(
+                entity_name=entity.get("entity_name"),
+                attributes=entity.get("attributes"),
+                relationships=entity.get("relationships")
+            ))
+    
+    # Convert development components
+    dev_components = []
+    if "development_view" in result_data:
+        for comp in result_data["development_view"]:
+            dev_components.append(DevelopmentComponent(
+                component_name=comp.get("component_name", ""),
+                description=comp.get("description"),
+                responsibilities=comp.get("responsibilities"),
+                dependencies=comp.get("dependencies"),
+                technologies=comp.get("technologies")
+            ))
+    
+    # Convert process flows
+    proc_flows = []
+    if "process_view" in result_data:
+        for flow in result_data["process_view"]:
+            proc_flows.append(ProcessFlow(
+                flow_name=flow.get("flow_name", ""),
+                description=flow.get("description"),
+                actors=flow.get("actors"),
+                steps=flow.get("steps")
+            ))
+    
+    # Convert task breakdowns
+    task_breakdowns = []
+    if "task_breakdown" in result_data:
+        for task in result_data["task_breakdown"]:
+            task_breakdowns.append(dict_to_task_breakdown(task))
+    
+    # Create the output schema object
+    output = SoftwareAnalysisOutputSchema(
+        summary=result_data.get("summary"),
+        task_breakdown=task_breakdowns,
+        total_estimate=result_data.get("total_estimate"),
+        api_analysis=api_endpoints,
+        erd_analysis=erd_entities,
+        development_view=dev_components,
+        process_view=proc_flows,
+        risks_and_considerations=result_data.get("risks_and_considerations", []),
+        suggested_questions=result_data.get("suggested_questions", []),
+        mermaid_task_diagram=result_data.get("mermaid_task_diagram"),
+        mermaid_erd_diagram=result_data.get("mermaid_erd_diagram"),
+        mermaid_component_diagram=result_data.get("mermaid_component_diagram"),
+        mermaid_sequence_diagram=result_data.get("mermaid_sequence_diagram")
+    )
+    
+    # Set the persist directory from the database
+    st.session_state.persist_directory = query["persist_directory"]
+    
+    # Set the results in session state
+    st.session_state.analysis_results = output
+    
+    return True
+
 def main():
     st.set_page_config(
         page_title="Software Requirement Analyzer", 
         page_icon="📊", 
         layout="wide"
     )
+    
+    # Initialize the database manager
+    db = DatabaseManager()
     
     st.title("Software Requirement Analyzer")
     st.markdown("Analyze software requirements to get task breakdowns, API designs, and entity-relationship diagrams.")
@@ -301,7 +413,7 @@ def main():
     if "diagrams_rendered" not in st.session_state:
         st.session_state.diagrams_rendered = False
     if "persist_directory" not in st.session_state:
-        st.session_state.persist_directory = os.path.join(os.path.expanduser("~"), ".est_egg_data")
+        st.session_state.persist_directory = './data'
     
     # Sidebar for input configuration
     st.sidebar.header("Settings")
@@ -311,6 +423,25 @@ def main():
     # Add persistence directory setting
     persist_dir = st.sidebar.text_input("Database Directory", value=st.session_state.persist_directory)
     st.session_state.persist_directory = persist_dir
+    
+    # Display recent queries in the sidebar
+    st.sidebar.header("Recent Analyses")
+    recent_queries = db.get_recent_queries(limit=5)
+    
+    if recent_queries:
+        for query in recent_queries:
+            # Format timestamp for display
+            timestamp = datetime.datetime.fromisoformat(query["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            
+            # Create a descriptive label for the button
+            label = f"{timestamp} - {query['result_summary'][:30]}..." if len(query['result_summary']) > 30 else query['result_summary']
+            
+            if st.sidebar.button(label, key=f"query_{query['id']}"):
+                if load_query_from_db(query["id"]):
+                    st.success(f"Loaded analysis from {timestamp}")
+                    st.rerun()
+    else:
+        st.sidebar.info("No previous analyses found")
     
     # Replace radio buttons with checkboxes to allow multiple selections
     st.header("Requirement Input")
@@ -384,6 +515,9 @@ def main():
                 # Merge requirements from text and files
                 merged_text, excel_files, markdown_files = merge_requirements(requirement_text, uploaded_files)
                 
+                # Store file names for database
+                file_names = [file.name for file in uploaded_files] if uploaded_files else []
+                
                 # Analyze from Excel files if present
                 if excel_files and not merged_text.strip() and not markdown_files:
                     # Only Excel files
@@ -414,8 +548,20 @@ def main():
                     # Text input or markdown files
                     results = analyst.analyze_from_text(merged_text)
                 
+                # Save results to session state
                 st.session_state.analysis_results = results
-                st.success("Analysis complete!")
+                
+                # Save query and results to database
+                db.save_query(
+                    input_text=requirement_text,
+                    input_files=file_names,
+                    persist_directory=st.session_state.persist_directory,
+                    result_summary=results.summary,
+                    result_data=results,
+                    total_estimate=results.total_estimate or "Unknown"
+                )
+                
+                st.success("Analysis complete and saved to history!")
         except Exception as e:
             st.error(f"Error during analysis: {str(e)}")
     
