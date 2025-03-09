@@ -181,16 +181,26 @@ def merge_requirements(text_requirement, uploaded_files):
     
     # Process uploaded files
     file_contents = []
+    excel_files = []
+    markdown_files = []
+    
     for uploaded_file in uploaded_files:
-        content = uploaded_file.read().decode("utf-8")
-        file_contents.append(f"## From file: {uploaded_file.name}\n{content}")
+        # Determine file type
+        if uploaded_file.name.lower().endswith(('.xlsx', '.xls')):
+            excel_files.append(uploaded_file)
+        else:
+            # Assume it's markdown
+            content = uploaded_file.read().decode("utf-8")
+            file_contents.append(f"## From file: {uploaded_file.name}\n{content}")
+            uploaded_file.seek(0)  # Reset file pointer after reading
+            markdown_files.append(uploaded_file)
     
     # Add file contents to requirements
     if file_contents:
         requirements.append("\n\n".join(file_contents))
     
-    # Merge all requirements
-    return "\n\n---\n\n".join(requirements)
+    # Return the merged requirements and separate Excel files
+    return "\n\n---\n\n".join(requirements), excel_files, markdown_files
 
 def display_development_components(components):
     """Render development components as markdown"""
@@ -290,19 +300,27 @@ def main():
         st.session_state.analysis_results = None
     if "diagrams_rendered" not in st.session_state:
         st.session_state.diagrams_rendered = False
+    if "persist_directory" not in st.session_state:
+        st.session_state.persist_directory = os.path.join(os.path.expanduser("~"), ".est_egg_data")
     
     # Sidebar for input configuration
     st.sidebar.header("Settings")
     api_key = st.sidebar.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
     st.session_state.api_key = api_key
     
+    # Add persistence directory setting
+    persist_dir = st.sidebar.text_input("Database Directory", value=st.session_state.persist_directory)
+    st.session_state.persist_directory = persist_dir
+    
     # Replace radio buttons with checkboxes to allow multiple selections
     st.header("Requirement Input")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         use_text_input = st.checkbox("Use Text Input", value=True)
     with col2:
         use_file_input = st.checkbox("Use Markdown Files", value=False)
+    with col3:
+        use_excel_input = st.checkbox("Use Excel Files", value=False)
     
     requirement_text = ""
     uploaded_files = []
@@ -314,21 +332,41 @@ def main():
             placeholder="Example: Implement a user authentication system with registration, login, password reset, and OAuth integration."
         )
     
-    if use_file_input:
-        uploaded_files = st.file_uploader("Upload markdown files", type=["md"], accept_multiple_files=True)
+    if use_file_input or use_excel_input:
+        accepted_types = []
+        if use_file_input:
+            accepted_types.extend(["md"])
+        if use_excel_input:
+            accepted_types.extend(["xlsx", "xls"])
+            
+        uploaded_files = st.file_uploader(
+            "Upload requirement files", 
+            type=accepted_types, 
+            accept_multiple_files=True
+        )
         
         if uploaded_files:
             st.subheader("File Previews")
             for i, uploaded_file in enumerate(uploaded_files):
                 with st.expander(f"Preview: {uploaded_file.name}"):
-                    content = uploaded_file.read().decode("utf-8")
-                    uploaded_file.seek(0)  # Reset file pointer after reading
-                    st.text_area(f"File {i+1} content:", value=content[:500] + ("..." if len(content) > 500 else ""), height=150, disabled=True)
+                    if uploaded_file.name.lower().endswith(('.xlsx', '.xls')):
+                        # For Excel files, display as dataframe
+                        try:
+                            df = pd.read_excel(uploaded_file)
+                            uploaded_file.seek(0)  # Reset file pointer after reading
+                            st.dataframe(df.head())
+                        except Exception as e:
+                            st.error(f"Error reading Excel file: {str(e)}")
+                    else:
+                        # For markdown files, show raw content
+                        content = uploaded_file.read().decode("utf-8")
+                        uploaded_file.seek(0)  # Reset file pointer after reading
+                        st.text_area(f"File content:", value=content[:500] + ("..." if len(content) > 500 else ""), height=150, disabled=True)
     
     if st.button("Analyze Requirements"):
         # Check if any inputs are provided
         if not requirement_text.strip() and not uploaded_files:
-            st.error("Please provide at least one input method (text or files).")
+            st.error("Please provide at least one input method (text, markdown or Excel files).")
             return
             
         if not api_key:
@@ -337,36 +375,44 @@ def main():
             
         try:
             with st.spinner("Analyzing requirements..."):
-                analyst = SoftwareAnalystAgent(api_key=api_key)
+                # Create analyst with persistence directory
+                analyst = SoftwareAnalystAgent(
+                    api_key=api_key,
+                    persist_directory=st.session_state.persist_directory
+                )
                 
-                if uploaded_files and not requirement_text.strip():
-                    # Only file uploads
+                # Merge requirements from text and files
+                merged_text, excel_files, markdown_files = merge_requirements(requirement_text, uploaded_files)
+                
+                # Analyze from Excel files if present
+                if excel_files and not merged_text.strip() and not markdown_files:
+                    # Only Excel files
                     with tempfile.TemporaryDirectory() as temp_dir:
                         temp_files = []
-                        for uploaded_file in uploaded_files:
-                            temp_path = os.path.join(temp_dir, uploaded_file.name)
+                        for excel_file in excel_files:
+                            temp_path = os.path.join(temp_dir, excel_file.name)
                             with open(temp_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
+                                f.write(excel_file.getbuffer())
                             temp_files.append(temp_path)
                         
-                        results = analyst.analyze_from_multiple_markdown(temp_files)
+                        # Use first Excel file for now
+                        if temp_files:
+                            results = analyst.analyze_from_excel(temp_files[0])
                 
-                elif requirement_text.strip() and not uploaded_files:
-                    # Only text input
-                    results = analyst.analyze_from_text(requirement_text)
+                elif merged_text.strip() and excel_files and not markdown_files:
+                    # Text and Excel input - analyze Excel first, then merge with text
+                    excel_results = []
+                    for excel_file in excel_files:
+                        result = analyst.analyze_from_excel_bytes(excel_file.getbuffer(), excel_file.name)
+                        excel_results.append(result.summary)
+                    
+                    # Combine Excel summaries with text input
+                    combined_req = merged_text + "\n\n" + "\n\n".join(excel_results)
+                    results = analyst.analyze_from_text(combined_req)
                 
                 else:
-                    # Both inputs - merge them
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        temp_files = []
-                        for uploaded_file in uploaded_files:
-                            temp_path = os.path.join(temp_dir, uploaded_file.name)
-                            with open(temp_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
-                            temp_files.append(temp_path)
-                        
-                        merged_requirement = merge_requirements(requirement_text, uploaded_files)
-                        results = analyst.analyze_from_text(merged_requirement)
+                    # Text input or markdown files
+                    results = analyst.analyze_from_text(merged_text)
                 
                 st.session_state.analysis_results = results
                 st.success("Analysis complete!")
@@ -477,13 +523,6 @@ def main():
             st.subheader("Diagram Rendering")
             # Add a button to explicitly render diagrams when the tab is selected
             if st.button("Render Diagrams", key="render_diagrams_button"):
-                st.session_state.diagrams_rendered = True
-                
-            # Show instructions if diagrams haven't been rendered yet
-            if not st.session_state.diagrams_rendered:
-                st.info("Click 'Render Diagrams' button above to display all diagrams.")
-            else:
-                # Render all diagrams when explicitly requested
                 render_diagrams(results)
 
 def run_streamlit():
