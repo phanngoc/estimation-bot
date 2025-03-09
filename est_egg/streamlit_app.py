@@ -8,6 +8,9 @@ import pandas as pd
 import html
 import uuid
 from streamlit_markdown import st_markdown  # Import the streamlit-markdown package
+from est_egg.database_manager import DatabaseManager
+import json
+import datetime
 
 def display_task_hierarchy(tasks, level=0):
     """Render task breakdown as markdown with proper indentation"""
@@ -181,16 +184,26 @@ def merge_requirements(text_requirement, uploaded_files):
     
     # Process uploaded files
     file_contents = []
+    excel_files = []
+    markdown_files = []
+    
     for uploaded_file in uploaded_files:
-        content = uploaded_file.read().decode("utf-8")
-        file_contents.append(f"## From file: {uploaded_file.name}\n{content}")
+        # Determine file type
+        if uploaded_file.name.lower().endswith(('.xlsx', '.xls')):
+            excel_files.append(uploaded_file)
+        else:
+            # Assume it's markdown
+            content = uploaded_file.read().decode("utf-8")
+            file_contents.append(f"## From file: {uploaded_file.name}\n{content}")
+            uploaded_file.seek(0)  # Reset file pointer after reading
+            markdown_files.append(uploaded_file)
     
     # Add file contents to requirements
     if file_contents:
         requirements.append("\n\n".join(file_contents))
     
-    # Merge all requirements
-    return "\n\n---\n\n".join(requirements)
+    # Return the merged requirements and separate Excel files
+    return "\n\n---\n\n".join(requirements), excel_files, markdown_files
 
 def display_development_components(components):
     """Render development components as markdown"""
@@ -273,12 +286,121 @@ def render_diagrams(results):
     else:
         st.info("No sequence diagram available.")
 
+def load_query_from_db(query_id):
+    """Load analysis results from database by query ID"""
+    db = DatabaseManager()
+    query = db.get_query_by_id(query_id)
+    
+    if not query:
+        return False
+    
+    # Parse the result_data back into SoftwareAnalysisOutputSchema
+    result_data = query["result_data"]
+    
+    # We need to reconstruct the full object structure from the serialized data
+    from est_egg.software_analyst_agent import SoftwareAnalysisOutputSchema, TaskBreakdown, APIEndpoint, ERDEntity, DevelopmentComponent, ProcessFlow
+    
+    # Helper function to convert dictionaries back to their respective classes
+    def dict_to_task_breakdown(task_dict):
+        subtasks = []
+        if "subtasks" in task_dict and task_dict["subtasks"]:
+            subtasks = [dict_to_task_breakdown(subtask) for subtask in task_dict["subtasks"]]
+        
+        return TaskBreakdown(
+            task_id=task_dict.get("task_id", ""),
+            parent_id=task_dict.get("parent_id"),
+            task_name=task_dict.get("task_name", ""),
+            description=task_dict.get("description"),
+            difficulty=task_dict.get("difficulty"),
+            time_estimate=task_dict.get("time_estimate"),
+            subtasks=subtasks
+        )
+    
+    # Convert API endpoints
+    api_endpoints = []
+    if "api_analysis" in result_data:
+        for api in result_data["api_analysis"]:
+            api_endpoints.append(APIEndpoint(
+                endpoint=api.get("endpoint"),
+                method=api.get("method"),
+                purpose=api.get("purpose"),
+                request_params=api.get("request_params"),
+                response_structure=api.get("response_structure")
+            ))
+    
+    # Convert ERD entities
+    erd_entities = []
+    if "erd_analysis" in result_data:
+        for entity in result_data["erd_analysis"]:
+            erd_entities.append(ERDEntity(
+                entity_name=entity.get("entity_name"),
+                attributes=entity.get("attributes"),
+                relationships=entity.get("relationships")
+            ))
+    
+    # Convert development components
+    dev_components = []
+    if "development_view" in result_data:
+        for comp in result_data["development_view"]:
+            dev_components.append(DevelopmentComponent(
+                component_name=comp.get("component_name", ""),
+                description=comp.get("description"),
+                responsibilities=comp.get("responsibilities"),
+                dependencies=comp.get("dependencies"),
+                technologies=comp.get("technologies")
+            ))
+    
+    # Convert process flows
+    proc_flows = []
+    if "process_view" in result_data:
+        for flow in result_data["process_view"]:
+            proc_flows.append(ProcessFlow(
+                flow_name=flow.get("flow_name", ""),
+                description=flow.get("description"),
+                actors=flow.get("actors"),
+                steps=flow.get("steps")
+            ))
+    
+    # Convert task breakdowns
+    task_breakdowns = []
+    if "task_breakdown" in result_data:
+        for task in result_data["task_breakdown"]:
+            task_breakdowns.append(dict_to_task_breakdown(task))
+    
+    # Create the output schema object
+    output = SoftwareAnalysisOutputSchema(
+        summary=result_data.get("summary"),
+        task_breakdown=task_breakdowns,
+        total_estimate=result_data.get("total_estimate"),
+        api_analysis=api_endpoints,
+        erd_analysis=erd_entities,
+        development_view=dev_components,
+        process_view=proc_flows,
+        risks_and_considerations=result_data.get("risks_and_considerations", []),
+        suggested_questions=result_data.get("suggested_questions", []),
+        mermaid_task_diagram=result_data.get("mermaid_task_diagram"),
+        mermaid_erd_diagram=result_data.get("mermaid_erd_diagram"),
+        mermaid_component_diagram=result_data.get("mermaid_component_diagram"),
+        mermaid_sequence_diagram=result_data.get("mermaid_sequence_diagram")
+    )
+    
+    # Set the persist directory from the database
+    st.session_state.persist_directory = query["persist_directory"]
+    
+    # Set the results in session state
+    st.session_state.analysis_results = output
+    
+    return True
+
 def main():
     st.set_page_config(
         page_title="Software Requirement Analyzer", 
         page_icon="📊", 
         layout="wide"
     )
+    
+    # Initialize the database manager
+    db = DatabaseManager()
     
     st.title("Software Requirement Analyzer")
     st.markdown("Analyze software requirements to get task breakdowns, API designs, and entity-relationship diagrams.")
@@ -290,19 +412,46 @@ def main():
         st.session_state.analysis_results = None
     if "diagrams_rendered" not in st.session_state:
         st.session_state.diagrams_rendered = False
+    if "persist_directory" not in st.session_state:
+        st.session_state.persist_directory = './data'
     
     # Sidebar for input configuration
     st.sidebar.header("Settings")
     api_key = st.sidebar.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
     st.session_state.api_key = api_key
     
+    # Add persistence directory setting
+    persist_dir = st.sidebar.text_input("Database Directory", value=st.session_state.persist_directory)
+    st.session_state.persist_directory = persist_dir
+    
+    # Display recent queries in the sidebar
+    st.sidebar.header("Recent Analyses")
+    recent_queries = db.get_recent_queries(limit=5)
+    
+    if recent_queries:
+        for query in recent_queries:
+            # Format timestamp for display
+            timestamp = datetime.datetime.fromisoformat(query["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            
+            # Create a descriptive label for the button
+            label = f"{timestamp} - {query['result_summary'][:30]}..." if len(query['result_summary']) > 30 else query['result_summary']
+            
+            if st.sidebar.button(label, key=f"query_{query['id']}"):
+                if load_query_from_db(query["id"]):
+                    st.success(f"Loaded analysis from {timestamp}")
+                    st.rerun()
+    else:
+        st.sidebar.info("No previous analyses found")
+    
     # Replace radio buttons with checkboxes to allow multiple selections
     st.header("Requirement Input")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         use_text_input = st.checkbox("Use Text Input", value=True)
     with col2:
         use_file_input = st.checkbox("Use Markdown Files", value=False)
+    with col3:
+        use_excel_input = st.checkbox("Use Excel Files", value=False)
     
     requirement_text = ""
     uploaded_files = []
@@ -314,21 +463,41 @@ def main():
             placeholder="Example: Implement a user authentication system with registration, login, password reset, and OAuth integration."
         )
     
-    if use_file_input:
-        uploaded_files = st.file_uploader("Upload markdown files", type=["md"], accept_multiple_files=True)
+    if use_file_input or use_excel_input:
+        accepted_types = []
+        if use_file_input:
+            accepted_types.extend(["md"])
+        if use_excel_input:
+            accepted_types.extend(["xlsx", "xls"])
+            
+        uploaded_files = st.file_uploader(
+            "Upload requirement files", 
+            type=accepted_types, 
+            accept_multiple_files=True
+        )
         
         if uploaded_files:
             st.subheader("File Previews")
             for i, uploaded_file in enumerate(uploaded_files):
                 with st.expander(f"Preview: {uploaded_file.name}"):
-                    content = uploaded_file.read().decode("utf-8")
-                    uploaded_file.seek(0)  # Reset file pointer after reading
-                    st.text_area(f"File {i+1} content:", value=content[:500] + ("..." if len(content) > 500 else ""), height=150, disabled=True)
+                    if uploaded_file.name.lower().endswith(('.xlsx', '.xls')):
+                        # For Excel files, display as dataframe
+                        try:
+                            df = pd.read_excel(uploaded_file)
+                            uploaded_file.seek(0)  # Reset file pointer after reading
+                            st.dataframe(df.head())
+                        except Exception as e:
+                            st.error(f"Error reading Excel file: {str(e)}")
+                    else:
+                        # For markdown files, show raw content
+                        content = uploaded_file.read().decode("utf-8")
+                        uploaded_file.seek(0)  # Reset file pointer after reading
+                        st.text_area(f"File content:", value=content[:500] + ("..." if len(content) > 500 else ""), height=150, disabled=True)
     
     if st.button("Analyze Requirements"):
         # Check if any inputs are provided
         if not requirement_text.strip() and not uploaded_files:
-            st.error("Please provide at least one input method (text or files).")
+            st.error("Please provide at least one input method (text, markdown or Excel files).")
             return
             
         if not api_key:
@@ -337,39 +506,62 @@ def main():
             
         try:
             with st.spinner("Analyzing requirements..."):
-                analyst = SoftwareAnalystAgent(api_key=api_key)
+                # Create analyst with persistence directory
+                analyst = SoftwareAnalystAgent(
+                    api_key=api_key,
+                    persist_directory=st.session_state.persist_directory
+                )
                 
-                if uploaded_files and not requirement_text.strip():
-                    # Only file uploads
+                # Merge requirements from text and files
+                merged_text, excel_files, markdown_files = merge_requirements(requirement_text, uploaded_files)
+                
+                # Store file names for database
+                file_names = [file.name for file in uploaded_files] if uploaded_files else []
+                
+                # Analyze from Excel files if present
+                if excel_files and not merged_text.strip() and not markdown_files:
+                    # Only Excel files
                     with tempfile.TemporaryDirectory() as temp_dir:
                         temp_files = []
-                        for uploaded_file in uploaded_files:
-                            temp_path = os.path.join(temp_dir, uploaded_file.name)
+                        for excel_file in excel_files:
+                            temp_path = os.path.join(temp_dir, excel_file.name)
                             with open(temp_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
+                                f.write(excel_file.getbuffer())
                             temp_files.append(temp_path)
                         
-                        results = analyst.analyze_from_multiple_markdown(temp_files)
+                        # Use first Excel file for now
+                        if temp_files:
+                            results = analyst.analyze_from_excel(temp_files[0])
                 
-                elif requirement_text.strip() and not uploaded_files:
-                    # Only text input
-                    results = analyst.analyze_from_text(requirement_text)
+                elif merged_text.strip() and excel_files and not markdown_files:
+                    # Text and Excel input - analyze Excel first, then merge with text
+                    excel_results = []
+                    for excel_file in excel_files:
+                        result = analyst.analyze_from_excel_bytes(excel_file.getbuffer(), excel_file.name)
+                        excel_results.append(result.summary)
+                    
+                    # Combine Excel summaries with text input
+                    combined_req = merged_text + "\n\n" + "\n\n".join(excel_results)
+                    results = analyst.analyze_from_text(combined_req)
                 
                 else:
-                    # Both inputs - merge them
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        temp_files = []
-                        for uploaded_file in uploaded_files:
-                            temp_path = os.path.join(temp_dir, uploaded_file.name)
-                            with open(temp_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
-                            temp_files.append(temp_path)
-                        
-                        merged_requirement = merge_requirements(requirement_text, uploaded_files)
-                        results = analyst.analyze_from_text(merged_requirement)
+                    # Text input or markdown files
+                    results = analyst.analyze_from_text(merged_text)
                 
+                # Save results to session state
                 st.session_state.analysis_results = results
-                st.success("Analysis complete!")
+                
+                # Save query and results to database
+                db.save_query(
+                    input_text=requirement_text,
+                    input_files=file_names,
+                    persist_directory=st.session_state.persist_directory,
+                    result_summary=results.summary,
+                    result_data=results,
+                    total_estimate=results.total_estimate or "Unknown"
+                )
+                
+                st.success("Analysis complete and saved to history!")
         except Exception as e:
             st.error(f"Error during analysis: {str(e)}")
     
@@ -477,13 +669,6 @@ def main():
             st.subheader("Diagram Rendering")
             # Add a button to explicitly render diagrams when the tab is selected
             if st.button("Render Diagrams", key="render_diagrams_button"):
-                st.session_state.diagrams_rendered = True
-                
-            # Show instructions if diagrams haven't been rendered yet
-            if not st.session_state.diagrams_rendered:
-                st.info("Click 'Render Diagrams' button above to display all diagrams.")
-            else:
-                # Render all diagrams when explicitly requested
                 render_diagrams(results)
 
 def run_streamlit():

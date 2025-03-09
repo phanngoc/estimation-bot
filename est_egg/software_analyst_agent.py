@@ -8,6 +8,8 @@ import openai
 import os
 import re
 from est_egg.markdown_file_reader import MarkdownFileReader
+from est_egg.requirement_context_provider import RequirementContextManager
+from est_egg.excel_to_markdown import ExcelToMarkdown
 
 class SoftwareAnalysisInputSchema(BaseIOSchema):
     """
@@ -124,12 +126,18 @@ class SoftwareAnalystAgent:
     Agent for analyzing software requirements and generating estimations and diagrams.
     """
     
-    def __init__(self, api_key=None):
+    def __init__(self, api_key=None, persist_directory="chromadb"):
         if api_key is None:
             api_key = os.environ.get("OPENAI_API_KEY")
         
         if not api_key:
             raise ValueError("API key is required for SoftwareAnalystAgent")
+        
+        # Initialize the requirement context manager
+        self.req_context_manager = RequirementContextManager(persist_directory)
+        
+        # Get the context provider
+        self.context_provider = self.req_context_manager.get_context_provider()
         
         self.agent = BaseAgent(
             config=BaseAgentConfig(
@@ -137,7 +145,8 @@ class SoftwareAnalystAgent:
                 model="gpt-4o",
                 system_prompt_generator=system_prompt_generator,
                 input_schema=SoftwareAnalysisInputSchema,
-                output_schema=SoftwareAnalysisOutputSchema
+                output_schema=SoftwareAnalysisOutputSchema,
+                context_providers=[self.context_provider]  # Add the context provider here
             )
         )
     
@@ -151,6 +160,9 @@ class SoftwareAnalystAgent:
         Returns:
             Analysis result with task breakdown and diagrams
         """
+        # Store the requirement in ChromaDB for future context
+        self.req_context_manager.add_requirement(requirement_text, "text_input")
+        
         input_data = SoftwareAnalysisInputSchema(requirement=requirement_text)
         result = self.agent.run(input_data)
         
@@ -248,6 +260,85 @@ class SoftwareAnalystAgent:
             print(f"Error processing markdown files: {str(e)}")
             return SoftwareAnalysisOutputSchema(
                 summary=f"Failed to analyze: {str(e)}",
+                task_breakdown=[],
+                mermaid_task_diagram="",
+                mermaid_erd_diagram=""
+            )
+    
+    def analyze_from_excel(self, file_path: str) -> SoftwareAnalysisOutputSchema:
+        """
+        Read requirements from an Excel file, convert to markdown, and analyze them.
+        
+        Args:
+            file_path: Path to the Excel file
+            
+        Returns:
+            Analysis result with task breakdown and diagrams
+        """
+        try:
+            # Convert Excel to markdown
+            markdown_content = ExcelToMarkdown.convert_excel_to_markdown(file_path)
+            
+            # Extract requirements from the markdown
+            requirements = ExcelToMarkdown.extract_requirements_from_markdown(markdown_content)
+            
+            if not requirements:
+                return SoftwareAnalysisOutputSchema(
+                    summary="No clear requirements found in the Excel file. Please check the format.",
+                    task_breakdown=[]
+                )
+            
+            # Store the requirements in ChromaDB
+            self.req_context_manager.add_multiple_requirements(requirements, f"excel:{os.path.basename(file_path)}")
+            
+            # Combine all extracted requirements into a single text
+            requirement_text = "\n\n".join(requirements)
+            
+            return self.analyze_from_text(requirement_text)
+        except Exception as e:
+            print(f"Error processing Excel file: {str(e)}")
+            return SoftwareAnalysisOutputSchema(
+                summary=f"Failed to analyze Excel file: {str(e)}",
+                task_breakdown=[],
+                mermaid_task_diagram="",
+                mermaid_erd_diagram=""
+            )
+    
+    def analyze_from_excel_bytes(self, file_content: bytes, file_name: str) -> SoftwareAnalysisOutputSchema:
+        """
+        Read requirements from Excel file bytes, convert to markdown, and analyze them.
+        
+        Args:
+            file_content: Excel file content as bytes
+            file_name: Original file name for reference
+            
+        Returns:
+            Analysis result with task breakdown and diagrams
+        """
+        try:
+            # Convert Excel bytes to markdown
+            markdown_content = ExcelToMarkdown.convert_excel_bytes_to_markdown(file_content, file_name)
+            
+            # Extract requirements from the markdown
+            requirements = ExcelToMarkdown.extract_requirements_from_markdown(markdown_content)
+            
+            if not requirements:
+                return SoftwareAnalysisOutputSchema(
+                    summary="No clear requirements found in the Excel file. Please check the format.",
+                    task_breakdown=[]
+                )
+            
+            # Store the requirements in ChromaDB
+            self.req_context_manager.add_multiple_requirements(requirements, f"excel:{file_name}")
+            
+            # Combine all extracted requirements into a single text
+            requirement_text = "\n\n".join(requirements)
+            
+            return self.analyze_from_text(requirement_text)
+        except Exception as e:
+            print(f"Error processing Excel file: {str(e)}")
+            return SoftwareAnalysisOutputSchema(
+                summary=f"Failed to analyze Excel file: {str(e)}",
                 task_breakdown=[],
                 mermaid_task_diagram="",
                 mermaid_erd_diagram=""
