@@ -242,6 +242,37 @@ def display_process_flows(flows):
             result += "\n"
     return result
 
+def render_diagrams(results):
+    """Render all diagrams with proper handling for tab switching"""
+    
+    # Task Hierarchy Diagram
+    st.subheader("Task Hierarchy Diagram")
+    if results.mermaid_task_diagram:
+        render_mermaid(results.mermaid_task_diagram, "task hierarchy")
+    else:
+        st.info("No task diagram available.")
+        
+    # Entity Relationship Diagram
+    st.subheader("Entity Relationship Diagram")
+    if results.mermaid_erd_diagram:
+        render_mermaid(results.mermaid_erd_diagram, "entity relationship")
+    else:
+        st.info("No ERD diagram available.")
+        
+    # Component Diagram
+    st.subheader("Component Diagram")
+    if results.mermaid_component_diagram:
+        render_mermaid(results.mermaid_component_diagram, "component")
+    else:
+        st.info("No component diagram available.")
+        
+    # Sequence Diagram
+    st.subheader("Sequence Diagram")
+    if results.mermaid_sequence_diagram:
+        render_mermaid(results.mermaid_sequence_diagram, "sequence")
+    else:
+        st.info("No sequence diagram available.")
+
 def main():
     st.set_page_config(
         page_title="Software Requirement Analyzer", 
@@ -257,6 +288,8 @@ def main():
         st.session_state.api_key = os.environ.get("OPENAI_API_KEY", "")
     if "analysis_results" not in st.session_state:
         st.session_state.analysis_results = None
+    if "diagrams_rendered" not in st.session_state:
+        st.session_state.diagrams_rendered = False
     
     # Sidebar for input configuration
     st.sidebar.header("Settings")
@@ -441,29 +474,17 @@ def main():
         
         # Tab 8: Diagrams
         with tabs[7]:
-            st.subheader("Task Hierarchy Diagram")
-            if results.mermaid_task_diagram:
-                render_mermaid(results.mermaid_task_diagram, "task hierarchy")
-            else:
-                st.info("No task diagram available.")
+            st.subheader("Diagram Rendering")
+            # Add a button to explicitly render diagrams when the tab is selected
+            if st.button("Render Diagrams", key="render_diagrams_button"):
+                st.session_state.diagrams_rendered = True
                 
-            st.subheader("Entity Relationship Diagram")
-            if results.mermaid_erd_diagram:
-                render_mermaid(results.mermaid_erd_diagram, "entity relationship")
+            # Show instructions if diagrams haven't been rendered yet
+            if not st.session_state.diagrams_rendered:
+                st.info("Click 'Render Diagrams' button above to display all diagrams.")
             else:
-                st.info("No ERD diagram available.")
-                
-            st.subheader("Component Diagram")
-            if results.mermaid_component_diagram:
-                render_mermaid(results.mermaid_component_diagram, "component")
-            else:
-                st.info("No component diagram available.")
-                
-            st.subheader("Sequence Diagram")
-            if results.mermaid_sequence_diagram:
-                render_mermaid(results.mermaid_sequence_diagram, "sequence")
-            else:
-                st.info("No sequence diagram available.")
+                # Render all diagrams when explicitly requested
+                render_diagrams(results)
 
 def run_streamlit():
     """Entry point for running the Streamlit app."""
