@@ -34,6 +34,7 @@ class DatabaseManager:
             timestamp TEXT NOT NULL,
             input_text TEXT,
             input_files TEXT,  -- JSON serialized file names
+            uploaded_files TEXT,  -- JSON serialized paths to uploaded files
             persist_directory TEXT,
             result_summary TEXT,
             result_data TEXT,  -- JSON serialized result data
@@ -46,7 +47,8 @@ class DatabaseManager:
     
     def save_query(self, 
                   input_text: str, 
-                  input_files: List[str], 
+                  input_files: List[str],
+                  uploaded_files: List[Dict[str, str]], 
                   persist_directory: str,
                   result_summary: str, 
                   result_data: Any,
@@ -57,6 +59,7 @@ class DatabaseManager:
         Args:
             input_text: The input requirement text
             input_files: List of input file names
+            uploaded_files: List of dicts with info about uploaded files
             persist_directory: ChromaDB persistence directory used
             result_summary: Summary of the analysis result
             result_data: Full result data to serialize
@@ -76,11 +79,11 @@ class DatabaseManager:
         
         # Insert query record
         cursor.execute('''
-        INSERT INTO queries (timestamp, input_text, input_files, persist_directory, 
+        INSERT INTO queries (timestamp, input_text, input_files, uploaded_files, persist_directory, 
                            result_summary, result_data, total_estimate)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (timestamp, input_text, json.dumps(input_files), persist_directory,
-              result_summary, result_data_json, total_estimate))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (timestamp, input_text, json.dumps(input_files), json.dumps(uploaded_files),
+              persist_directory, result_summary, result_data_json, total_estimate))
         
         # Get the ID of the inserted record
         query_id = cursor.lastrowid
@@ -105,7 +108,7 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         cursor.execute('''
-        SELECT id, timestamp, input_text, input_files, result_summary, total_estimate
+        SELECT id, timestamp, input_text, input_files, uploaded_files, result_summary, total_estimate
         FROM queries
         ORDER BY timestamp DESC
         LIMIT ?
@@ -120,6 +123,8 @@ class DatabaseManager:
             # Parse JSON fields
             if query['input_files']:
                 query['input_files'] = json.loads(query['input_files'])
+            if query.get('uploaded_files'):
+                query['uploaded_files'] = json.loads(query['uploaded_files'])
             queries.append(query)
         
         conn.close()
@@ -141,7 +146,7 @@ class DatabaseManager:
         cursor = conn.cursor()
         
         cursor.execute('''
-        SELECT id, timestamp, input_text, input_files, persist_directory,
+        SELECT id, timestamp, input_text, input_files, uploaded_files, persist_directory,
                result_summary, result_data, total_estimate
         FROM queries
         WHERE id = ?
@@ -158,6 +163,8 @@ class DatabaseManager:
         # Parse JSON fields
         if query['input_files']:
             query['input_files'] = json.loads(query['input_files'])
+        if query.get('uploaded_files'):
+            query['uploaded_files'] = json.loads(query['uploaded_files'])
         if query['result_data']:
             query['result_data'] = json.loads(query['result_data'])
         

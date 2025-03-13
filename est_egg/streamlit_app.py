@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import re
+import shutil
 from est_egg.software_analyst_agent import SoftwareAnalystAgent
 import streamlit.components.v1 as components
 import pandas as pd
@@ -173,6 +174,31 @@ def render_mermaid(mermaid_code, diagram_type=""):
     except Exception as e:
         st.error(f"Error rendering diagram: {str(e)}")
         st.code(mermaid_code, language="mermaid")
+
+def save_uploaded_file(uploaded_file, upload_dir):
+    """
+    Save an uploaded file to the specified directory
+    
+    Args:
+        uploaded_file: The uploaded file object
+        upload_dir: Directory to save the file in
+        
+    Returns:
+        Path to the saved file
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # Generate a unique filename to avoid overwriting
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_{uploaded_file.name}"
+    file_path = os.path.join(upload_dir, filename)
+    
+    # Save the file
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+        
+    return file_path
 
 def merge_requirements(text_requirement, uploaded_files):
     """Merge requirements from text input and uploaded files"""
@@ -387,6 +413,12 @@ def load_query_from_db(query_id):
     # Set the persist directory from the database
     st.session_state.persist_directory = query["persist_directory"]
     
+    # Store the uploaded files info for display
+    if "uploaded_files" in query and query["uploaded_files"]:
+        st.session_state.uploaded_files = query["uploaded_files"]
+    else:
+        st.session_state.uploaded_files = []
+    
     # Set the results in session state
     st.session_state.analysis_results = output
     
@@ -414,6 +446,11 @@ def main():
         st.session_state.diagrams_rendered = False
     if "persist_directory" not in st.session_state:
         st.session_state.persist_directory = './data'
+    if "uploaded_files" not in st.session_state:
+        st.session_state.uploaded_files = []
+    
+    # Define uploads directory - relative to app directory
+    uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
     
     # Sidebar for input configuration
     st.sidebar.header("Settings")
@@ -436,12 +473,24 @@ def main():
             # Create a descriptive label for the button
             label = f"{timestamp} - {query['result_summary'][:30]}..." if len(query['result_summary']) > 30 else query['result_summary']
             
+            # Display uploaded files count if any
+            if query.get("uploaded_files") and len(query["uploaded_files"]) > 0:
+                label += f" ({len(query['uploaded_files'])} files)"
+            
             if st.sidebar.button(label, key=f"query_{query['id']}"):
                 if load_query_from_db(query["id"]):
                     st.success(f"Loaded analysis from {timestamp}")
                     st.rerun()
     else:
         st.sidebar.info("No previous analyses found")
+    
+    # Display uploaded files from previous analyses if loaded
+    if st.session_state.uploaded_files:
+        st.sidebar.subheader("Uploaded Files")
+        for file_info in st.session_state.uploaded_files:
+            filename = os.path.basename(file_info.get("path", ""))
+            file_type = file_info.get("type", "Unknown")
+            st.sidebar.text(f"📄 {filename} ({file_type})")
     
     # Replace radio buttons with checkboxes to allow multiple selections
     st.header("Requirement Input")
@@ -512,6 +561,29 @@ def main():
                     persist_directory=st.session_state.persist_directory
                 )
                 
+                # Save uploaded files to the uploads directory
+                saved_files = []
+                for uploaded_file in uploaded_files:
+                    # Save the file
+                    file_path = save_uploaded_file(uploaded_file, uploads_dir)
+                    
+                    # Determine file type
+                    file_type = "Excel" if uploaded_file.name.lower().endswith(('.xlsx', '.xls')) else "Markdown"
+                    
+                    # Add to saved files list
+                    saved_files.append({
+                        "name": uploaded_file.name,
+                        "path": file_path,
+                        "type": file_type,
+                        "size": os.path.getsize(file_path)
+                    })
+                    
+                    # Reset file pointer for further processing
+                    uploaded_file.seek(0)
+                
+                # Store saved files in session state
+                st.session_state.uploaded_files = saved_files
+                
                 # Merge requirements from text and files
                 merged_text, excel_files, markdown_files = merge_requirements(requirement_text, uploaded_files)
                 
@@ -555,6 +627,7 @@ def main():
                 db.save_query(
                     input_text=requirement_text,
                     input_files=file_names,
+                    uploaded_files=saved_files,
                     persist_directory=st.session_state.persist_directory,
                     result_summary=results.summary,
                     result_data=results,
@@ -564,6 +637,19 @@ def main():
                 st.success("Analysis complete and saved to history!")
         except Exception as e:
             st.error(f"Error during analysis: {str(e)}")
+    
+    # Display uploaded files information
+    if st.session_state.uploaded_files:
+        st.header("Uploaded Files")
+        files_df = pd.DataFrame([
+            {
+                "Filename": os.path.basename(file["path"]),
+                "Type": file["type"],
+                "Size (KB)": round(file["size"] / 1024, 2)
+            }
+            for file in st.session_state.uploaded_files
+        ])
+        st.dataframe(files_df, hide_index=True)
     
     # Display results if available
     if st.session_state.analysis_results:
