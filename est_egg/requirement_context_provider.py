@@ -47,6 +47,11 @@ class RequirementContextProvider(SystemPromptContextProviderBase):
             n_results=self.max_results
         )
         
+        # Log the retrieved similar requirements
+        print(f"Retrieved {len(similar_requirements)} similar requirements")
+        for i, req in enumerate(similar_requirements):
+            print(f"Requirement {i+1}: {req.get('content', '')[:50]}... | Score: {req.get('relevance_score', 'N/A')}")
+
         if not similar_requirements:
             return "No similar historical requirements found in the database."
         

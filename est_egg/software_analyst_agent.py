@@ -121,6 +121,8 @@ system_prompt_generator = SystemPromptGenerator(
     ]
 )
 
+import re
+
 class SoftwareAnalystAgent:
     """
     Agent for analyzing software requirements and generating estimations and diagrams.
@@ -160,8 +162,20 @@ class SoftwareAnalystAgent:
         Returns:
             Analysis result with task breakdown and diagrams
         """
-        # Store the requirement in ChromaDB for future context
-        self.req_context_manager.add_requirement(requirement_text, "text_input")
+        # Split the requirement text into sentences for more granular storage
+        sentences = re.split(r'(?<=[.!?])\s+', requirement_text)
+        
+        # Filter out empty sentences
+        sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+        
+        # Store individual sentences in ChromaDB for more granular context
+        source_id = f"text_input_{len(sentences)}_chunks"
+        
+        if sentences:
+            # Add each sentence as a separate document
+            self.req_context_manager.add_multiple_requirements(sentences, source_id)
+            # Also store the full text for complete context
+            self.req_context_manager.add_requirement(requirement_text, f"{source_id}_full")
         
         input_data = SoftwareAnalysisInputSchema(requirement=requirement_text)
         result = self.agent.run(input_data)
