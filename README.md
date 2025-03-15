@@ -3,7 +3,9 @@
 A tool to help developers create better estimations for software projects by analyzing requirements, breaking down tasks, and visualizing relationships.
 
 
-![Software Estimation App](./screenshot.png)
+![Software Estimation App](./images/screenshot.png)
+
+![Sequence Diagram](./images/sequence_diagram.png)
 
 ## Features
 
@@ -20,10 +22,18 @@ A tool to help developers create better estimations for software projects by ana
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd est_app
 
 # Install dependencies
 pip install -e .
+```
+
+## Setting env
+
+- Set environment variables in `.env` file
+```
+export OPENAI_API_KEY="your-api-key"
+DB_CHROMA_PATH=./data/chroma
+DB_SQLITE_PATH=./data/db.sqlite3
 ```
 
 ## Usage
@@ -31,37 +41,7 @@ pip install -e .
 ### Run application streamlit
 
 ```
-python est_egg/run_app.py
-```
-
-### Command Line Interface
-
-```bash
-# Set your OpenAI API key
-export OPENAI_API_KEY="your-api-key"
-
-# Analyze from text
-python -m est_egg.cli analyze-text --text "Implement a user authentication system with registration, login, and password reset."
-
-# Analyze from markdown file
-python -m est_egg.cli analyze-file --file /path/to/requirements.md
-```
-
-### Python API
-
-```python
-from est_egg import SoftwareAnalystAgent
-
-# Initialize the agent
-agent = SoftwareAnalystAgent()
-
-# Analyze from text
-result = agent.analyze_from_text("Implement a product catalog with categories and search functionality.")
-agent.print_analysis_results(result)
-
-# Analyze from markdown file
-result = agent.analyze_from_markdown("/path/to/requirements.md")
-agent.print_analysis_results(result)
+python run_app.py
 ```
 
 ## Example Output
