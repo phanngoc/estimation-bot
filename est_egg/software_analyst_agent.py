@@ -217,7 +217,7 @@ class SoftwareAnalystAgent:
             if not re.match(r'^sequenceDiagram', result.mermaid_sequence_diagram):
                 result.mermaid_sequence_diagram = "sequenceDiagram\n" + result.mermaid_sequence_diagram
     
-    def analyze_from_markdown(self, file_path: str) -> SoftwareAnalysisOutputSchema:
+    def index_from_markdown(self, file_path: str) -> SoftwareAnalysisOutputSchema:
         """
         Read requirements from a markdown file and analyze them.
         
@@ -230,56 +230,13 @@ class SoftwareAnalystAgent:
         try:
             md_content = MarkdownFileReader.read_file(file_path)
             requirements = MarkdownFileReader.extract_requirements(md_content)
+
+            self.req_context_manager.add_multiple_requirements(requirements, f"markdown:{os.path.basename(file_path)}")
             
-            # Combine all extracted requirements into a single text
-            requirement_text = "\n\n".join(requirements)
-            
-            return self.analyze_from_text(requirement_text)
         except FileNotFoundError as e:
             print(f"Error: {str(e)}")
-            return SoftwareAnalysisOutputSchema(
-                summary=f"Failed to analyze: {str(e)}",
-                task_breakdown=[],
-                mermaid_task_diagram="",
-                mermaid_erd_diagram=""
-            )
     
-    def analyze_from_multiple_markdown(self, file_paths: List[str]) -> SoftwareAnalysisOutputSchema:
-        """
-        Read requirements from multiple markdown files and analyze them together.
-        
-        Args:
-            file_paths: List of paths to markdown files
-            
-        Returns:
-            Analysis result with task breakdown and diagrams
-        """
-        try:
-            all_requirements = []
-            
-            for file_path in file_paths:
-                md_content = MarkdownFileReader.read_file(file_path)
-                requirements = MarkdownFileReader.extract_requirements(md_content)
-                file_name = os.path.basename(file_path)
-                
-                # Add header for each file's requirements
-                file_requirements = [f"# From {file_name}:", ""] + requirements
-                all_requirements.append("\n".join(file_requirements))
-            
-            # Combine all extracted requirements into a single text
-            merged_requirements = "\n\n---\n\n".join(all_requirements)
-            
-            return self.analyze_from_text(merged_requirements)
-        except Exception as e:
-            print(f"Error processing markdown files: {str(e)}")
-            return SoftwareAnalysisOutputSchema(
-                summary=f"Failed to analyze: {str(e)}",
-                task_breakdown=[],
-                mermaid_task_diagram="",
-                mermaid_erd_diagram=""
-            )
-    
-    def analyze_from_excel(self, file_path: str) -> SoftwareAnalysisOutputSchema:
+    def index_from_excel(self, file_path: str) -> SoftwareAnalysisOutputSchema:
         """
         Read requirements from an Excel file, convert to markdown, and analyze them.
         
@@ -304,60 +261,10 @@ class SoftwareAnalystAgent:
             
             # Store the requirements in ChromaDB
             self.req_context_manager.add_multiple_requirements(requirements, f"excel:{os.path.basename(file_path)}")
-            
-            # Combine all extracted requirements into a single text
-            requirement_text = "\n\n".join(requirements)
-            
-            return self.analyze_from_text(requirement_text)
+
         except Exception as e:
             print(f"Error processing Excel file: {str(e)}")
-            return SoftwareAnalysisOutputSchema(
-                summary=f"Failed to analyze Excel file: {str(e)}",
-                task_breakdown=[],
-                mermaid_task_diagram="",
-                mermaid_erd_diagram=""
-            )
-    
-    def analyze_from_excel_bytes(self, file_content: bytes, file_name: str) -> SoftwareAnalysisOutputSchema:
-        """
-        Read requirements from Excel file bytes, convert to markdown, and analyze them.
-        
-        Args:
-            file_content: Excel file content as bytes
-            file_name: Original file name for reference
-            
-        Returns:
-            Analysis result with task breakdown and diagrams
-        """
-        try:
-            # Convert Excel bytes to markdown
-            markdown_content = ExcelToMarkdown.convert_excel_bytes_to_markdown(file_content, file_name)
-            
-            # Extract requirements from the markdown
-            requirements = ExcelToMarkdown.extract_requirements_from_markdown(markdown_content)
-            
-            if not requirements:
-                return SoftwareAnalysisOutputSchema(
-                    summary="No clear requirements found in the Excel file. Please check the format.",
-                    task_breakdown=[]
-                )
-            
-            # Store the requirements in ChromaDB
-            self.req_context_manager.add_multiple_requirements(requirements, f"excel:{file_name}")
-            
-            # Combine all extracted requirements into a single text
-            requirement_text = "\n\n".join(requirements)
-            
-            return self.analyze_from_text(requirement_text)
-        except Exception as e:
-            print(f"Error processing Excel file: {str(e)}")
-            return SoftwareAnalysisOutputSchema(
-                summary=f"Failed to analyze Excel file: {str(e)}",
-                task_breakdown=[],
-                mermaid_task_diagram="",
-                mermaid_erd_diagram=""
-            )
-    
+
     def print_analysis_results(self, response: SoftwareAnalysisOutputSchema):
         """
         Print the analysis results in a readable format.

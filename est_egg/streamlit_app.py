@@ -590,8 +590,12 @@ def main():
                 # Store file names for database
                 file_names = [file.name for file in uploaded_files] if uploaded_files else []
                 
+                if markdown_files:
+                    # Only Markdown files
+                    for markdown_file in markdown_files:
+                        analyst.index_from_markdown(markdown_file)
                 # Analyze from Excel files if present
-                if excel_files and not merged_text.strip() and not markdown_files:
+                if excel_files:
                     # Only Excel files
                     with tempfile.TemporaryDirectory() as temp_dir:
                         temp_files = []
@@ -603,22 +607,11 @@ def main():
                         
                         # Use first Excel file for now
                         if temp_files:
-                            results = analyst.analyze_from_excel(temp_files[0])
-                
-                elif merged_text.strip() and excel_files and not markdown_files:
-                    # Text and Excel input - analyze Excel first, then merge with text
-                    excel_results = []
-                    for excel_file in excel_files:
-                        result = analyst.analyze_from_excel_bytes(excel_file.getbuffer(), excel_file.name)
-                        excel_results.append(result.summary)
-                    
-                    # Combine Excel summaries with text input
-                    combined_req = merged_text + "\n\n" + "\n\n".join(excel_results)
-                    results = analyst.analyze_from_text(combined_req)
-                
-                else:
-                    # Text input or markdown files
-                    results = analyst.analyze_from_text(merged_text)
+                            analyst.index_from_excel(temp_files[0])
+                            
+
+                if merged_text.strip():
+                    results = analyst.analyze_from_text(requirement_text)
                 
                 # Save results to session state
                 st.session_state.analysis_results = results

@@ -3,7 +3,7 @@ import os
 import uuid
 from typing import List, Dict, Any, Optional
 import hashlib
-
+from est_egg.database_manager import DatabaseManager
 
 class ChromaDBManager:
     """
@@ -29,10 +29,13 @@ class ChromaDBManager:
             name="requirements_collection",
             metadata={"hnsw:space": "cosine"}
         )
+        
+        # Initialize SQLite database manager
+        self.db_manager = DatabaseManager()
     
     def add_requirement(self, content: str, source: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Add a requirement to the ChromaDB collection.
+        Add a requirement to the ChromaDB collection and SQLite.
         
         Args:
             content: The requirement content
@@ -52,19 +55,22 @@ class ChromaDBManager:
         metadata["source"] = source
         metadata["timestamp"] = str(uuid.uuid4())
         
-        # Add to collection
+        # Add to ChromaDB collection
         self.collection.add(
             documents=[content],
             metadatas=[metadata],
             ids=[doc_id]
         )
         
+        # Also save to SQLite
+        self.db_manager.save_requirements([doc_id], [content], source, [metadata])
+        
         return doc_id
     
     def add_multiple_requirements(self, contents: List[str], source: str, 
                                  metadatas: Optional[List[Dict[str, Any]]] = None) -> List[str]:
         """
-        Add multiple requirements to the ChromaDB collection.
+        Add multiple requirements to the ChromaDB collection and SQLite.
         If documents with the same ID already exist, they will be updated.
         
         Args:
@@ -89,7 +95,7 @@ class ChromaDBManager:
             metadata["source"] = source
             metadata["timestamp"] = str(uuid.uuid4())
         
-        # Check which IDs already exist in the collection
+        # Store in ChromaDB
         try:
             existing_ids = []
             for doc_id in doc_ids:
@@ -136,6 +142,9 @@ class ChromaDBManager:
                 metadatas=metadatas,
                 ids=doc_ids
             )
+        
+        # Also save to SQLite - will handle duplicates with INSERT OR REPLACE
+        self.db_manager.save_requirements(doc_ids, contents, source, metadatas)
         
         return doc_ids
     

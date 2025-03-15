@@ -30,7 +30,7 @@ class RequirementContextProvider(SystemPromptContextProviderBase):
             Context as string to inject into the system prompt
         """
         query = ""
-        
+        print('get_info:current_input:', current_input)
         # Extract query from input
         if "requirement" in current_input and current_input["requirement"]:
             query = current_input["requirement"]
