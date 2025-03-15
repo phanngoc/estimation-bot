@@ -1,6 +1,6 @@
 import argparse
 import os
-from est_egg.software_analyst_agent import SoftwareAnalystAgent
+from src.software_analyst_agent import SoftwareAnalystAgent
 
 def main():
     """

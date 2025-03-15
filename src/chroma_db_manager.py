@@ -3,7 +3,6 @@ import os
 import uuid
 from typing import List, Dict, Any, Optional
 import hashlib
-from est_egg.database_manager import DatabaseManager
 
 class ChromaDBManager:
     """
@@ -16,6 +15,8 @@ class ChromaDBManager:
         
         Args:
             persist_directory: Directory to persist ChromaDB data. If None, uses in-memory database.
+            db_manager: Optional DatabaseManager instance for persistent storage. If None, vector operations will
+                        only use ChromaDB without persistent relational storage.
         """
         if persist_directory:
             os.makedirs(persist_directory, exist_ok=True)
@@ -29,13 +30,10 @@ class ChromaDBManager:
             name="requirements_collection",
             metadata={"hnsw:space": "cosine"}
         )
-        
-        # Initialize SQLite database manager
-        self.db_manager = DatabaseManager()
-    
+
     def add_requirement(self, content: str, source: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Add a requirement to the ChromaDB collection and SQLite.
+        Add a requirement to the ChromaDB collection.
         
         Args:
             content: The requirement content
@@ -61,10 +59,7 @@ class ChromaDBManager:
             metadatas=[metadata],
             ids=[doc_id]
         )
-        
-        # Also save to SQLite
-        self.db_manager.save_requirements([doc_id], [content], source, [metadata])
-        
+
         return doc_id
     
     def add_multiple_requirements(self, contents: List[str], source: str, 
@@ -143,9 +138,6 @@ class ChromaDBManager:
                 ids=doc_ids
             )
         
-        # Also save to SQLite - will handle duplicates with INSERT OR REPLACE
-        self.db_manager.save_requirements(doc_ids, contents, source, metadatas)
-        
         return doc_ids
     
     def query_similar_requirements(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
@@ -199,6 +191,19 @@ class ChromaDBManager:
         except Exception:
             return False
     
+    def delete_all(self) -> bool:
+        """
+        Delete all requirements from the collection.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.collection.delete(where={})
+            return True
+        except Exception:
+            return False
+
     def count_requirements(self) -> int:
         """
         Count the number of requirements stored in the collection.
