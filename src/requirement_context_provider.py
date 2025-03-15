@@ -1,6 +1,6 @@
 from typing import Dict, Any, List, Optional
 from atomic_agents.lib.components.system_prompt_generator import SystemPromptContextProviderBase
-from est_egg.chroma_db_manager import ChromaDBManager
+from src.chroma_db_manager import ChromaDBManager
 
 
 class RequirementContextProvider(SystemPromptContextProviderBase):
@@ -79,14 +79,14 @@ class RequirementContextManager:
     Manager class for initializing and configuring the requirement context provider.
     """
     
-    def __init__(self, persist_directory: Optional[str] = None):
+    def __init__(self, chroma_db: ChromaDBManager):
         """
         Initialize the requirement context manager.
         
         Args:
             persist_directory: Directory to persist ChromaDB data
         """
-        self.chroma_db = ChromaDBManager(persist_directory)
+        self.chroma_db = chroma_db
         self.context_provider = RequirementContextProvider("spec_file", self.chroma_db)
     
     def add_requirement(self, content: str, source: str) -> str:
@@ -123,3 +123,12 @@ class RequirementContextManager:
             RequirementContextProvider instance
         """
         return self.context_provider
+    
+    def truncate_requirements(self) -> int:
+        """
+        Remove all requirements from the ChromaDB collection.
+        
+        Returns:
+            Number of requirements deleted
+        """
+        return self.chroma_db.truncate_collection()

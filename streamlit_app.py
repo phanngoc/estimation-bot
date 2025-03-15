@@ -3,15 +3,18 @@ import os
 import tempfile
 import re
 import shutil
-from est_egg.software_analyst_agent import SoftwareAnalystAgent
+from src.chroma_db_manager import ChromaDBManager
+from src.database_manager import DatabaseManager
+from src.software_analyst_agent import SoftwareAnalystAgent
 import streamlit.components.v1 as components
 import pandas as pd
 import html
 import uuid
 from streamlit_markdown import st_markdown  # Import the streamlit-markdown package
-from est_egg.database_manager import DatabaseManager
 import json
 import datetime
+# We need to reconstruct the full object structure from the serialized data
+from src.software_analyst_agent import SoftwareAnalysisOutputSchema, TaskBreakdown, APIEndpoint, ERDEntity, DevelopmentComponent, ProcessFlow
 
 def display_task_hierarchy(tasks, level=0):
     """Render task breakdown as markdown with proper indentation"""
@@ -303,36 +306,35 @@ def render_diagrams(results):
     else:
         st.info("No sequence diagram available.")
 
+
+db = DatabaseManager(os.environ.get("DB_SQLITE_PATH"))
+dbChroma = ChromaDBManager(persist_directory=os.environ.get("DB_CHROMA_PATH"))
+# Helper function to convert dictionaries back to their respective classes
+def dict_to_task_breakdown(task_dict):
+    subtasks = []
+    if "subtasks" in task_dict and task_dict["subtasks"]:
+        subtasks = [dict_to_task_breakdown(subtask) for subtask in task_dict["subtasks"]]
+    
+    return TaskBreakdown(
+        task_id=task_dict.get("task_id", ""),
+        parent_id=task_dict.get("parent_id"),
+        task_name=task_dict.get("task_name", ""),
+        description=task_dict.get("description"),
+        difficulty=task_dict.get("difficulty"),
+        time_estimate=task_dict.get("time_estimate"),
+        subtasks=subtasks
+    )
+
 def load_query_from_db(query_id):
     """Load analysis results from database by query ID"""
-    db = DatabaseManager()
-    query = db.get_query_by_id(query_id)
+    query = db.get_query(query_id)
     
     if not query:
         return False
     
     # Parse the result_data back into SoftwareAnalysisOutputSchema
     result_data = query["result_data"]
-    
-    # We need to reconstruct the full object structure from the serialized data
-    from est_egg.software_analyst_agent import SoftwareAnalysisOutputSchema, TaskBreakdown, APIEndpoint, ERDEntity, DevelopmentComponent, ProcessFlow
-    
-    # Helper function to convert dictionaries back to their respective classes
-    def dict_to_task_breakdown(task_dict):
-        subtasks = []
-        if "subtasks" in task_dict and task_dict["subtasks"]:
-            subtasks = [dict_to_task_breakdown(subtask) for subtask in task_dict["subtasks"]]
-        
-        return TaskBreakdown(
-            task_id=task_dict.get("task_id", ""),
-            parent_id=task_dict.get("parent_id"),
-            task_name=task_dict.get("task_name", ""),
-            description=task_dict.get("description"),
-            difficulty=task_dict.get("difficulty"),
-            time_estimate=task_dict.get("time_estimate"),
-            subtasks=subtasks
-        )
-    
+
     # Convert API endpoints
     api_endpoints = []
     if "api_analysis" in result_data:
@@ -416,15 +418,13 @@ def load_query_from_db(query_id):
     return True
 
 def main():
+    
     st.set_page_config(
         page_title="Software Requirement Analyzer", 
         page_icon="📊", 
         layout="wide"
     )
-    
-    # Initialize the database manager
-    db = DatabaseManager()
-    
+
     st.title("Software Requirement Analyzer")
     st.markdown("Analyze software requirements to get task breakdowns, API designs, and entity-relationship diagrams.")
     
@@ -439,7 +439,7 @@ def main():
         st.session_state.persist_directory = './data'
     if "uploaded_files" not in st.session_state:
         st.session_state.uploaded_files = []
-    
+
     # Define uploads directory - relative to app directory
     uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
     
@@ -448,6 +448,11 @@ def main():
     api_key = st.sidebar.text_input("OpenAI API Key", value=st.session_state.api_key, type="password")
     st.session_state.api_key = api_key
     
+    analyst = SoftwareAnalystAgent(
+        api_key=st.session_state.api_key,
+        db_chroma=dbChroma
+    )
+
     # Add persistence directory setting
     persist_dir = st.sidebar.text_input("Database Directory", value=st.session_state.persist_directory)
     st.session_state.persist_directory = persist_dir
@@ -456,6 +461,47 @@ def main():
     st.sidebar.header("Recent Analyses")
     recent_queries = db.get_recent_queries(limit=5)
     
+    # Add Clear History button with confirmation
+    if "show_clear_dialog" not in st.session_state:
+        st.session_state.show_clear_dialog = False
+
+    if st.sidebar.button("🗑️ Clear History", type="secondary"):
+        st.session_state.show_clear_dialog = True
+
+    if st.session_state.show_clear_dialog:
+        clear_container = st.sidebar.container()
+        with clear_container:
+            st.warning("Are you sure you want to clear all analysis history? This cannot be undone.")
+            col1, col2 = st.columns(2)
+            
+            if col1.button("Yes, Clear History", key="confirm_clear"):
+                # Clear database records
+                deleted_count = db.clear_all_queries()
+                
+                # Optionally clear uploaded files
+                if st.session_state.uploaded_files:
+                    for file_info in st.session_state.uploaded_files:
+                        # Check if file exists before trying to delete it
+                        if os.path.exists(file_info.get("path", "")):
+                            try:
+                                os.remove(file_info.get("path", ""))
+                            except Exception as e:
+                                print(f"Error deleting file {file_info.get('path')}: {str(e)}")
+                
+                dbChroma.delete_all()
+                analyst.get_req_context_manager().truncate_requirements()
+                # Reset session state related to previous analyses
+                st.session_state.analysis_results = None
+                st.session_state.uploaded_files = []
+                st.session_state.show_clear_dialog = False
+                
+                st.sidebar.success(f"Successfully cleared {deleted_count} analyses from history")
+                st.rerun()
+            
+            if col2.button("Cancel", key="cancel_clear"):
+                st.session_state.show_clear_dialog = False
+                st.rerun()
+
     if recent_queries:
         for query in recent_queries:
             # Format timestamp for display
@@ -546,12 +592,6 @@ def main():
             
         try:
             with st.spinner("Analyzing requirements..."):
-                # Create analyst with persistence directory
-                analyst = SoftwareAnalystAgent(
-                    api_key=api_key,
-                    persist_directory=st.session_state.persist_directory
-                )
-                
                 # Save uploaded files to the uploads directory
                 saved_files = []
                 for uploaded_file in uploaded_files:
@@ -742,6 +782,9 @@ def main():
             # Add a button to explicitly render diagrams when the tab is selected
             if st.button("Render Diagrams", key="render_diagrams_button"):
                 render_diagrams(results)
+
+            render_diagrams(results)
+
 
 def run_streamlit():
     """Entry point for running the Streamlit app."""

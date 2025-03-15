@@ -7,9 +7,10 @@ import instructor
 import openai
 import os
 import re
-from est_egg.markdown_file_reader import MarkdownFileReader
-from est_egg.requirement_context_provider import RequirementContextManager
-from est_egg.excel_to_markdown import ExcelToMarkdown
+from src.chroma_db_manager import ChromaDBManager
+from src.markdown_file_reader import MarkdownFileReader
+from src.requirement_context_provider import RequirementContextManager
+from src.excel_to_markdown import ExcelToMarkdown
 
 class SoftwareAnalysisInputSchema(BaseIOSchema):
     """
@@ -128,7 +129,7 @@ class SoftwareAnalystAgent:
     Agent for analyzing software requirements and generating estimations and diagrams.
     """
     
-    def __init__(self, api_key=None, persist_directory="chromadb"):
+    def __init__(self, api_key=None, db_chroma: ChromaDBManager = None):
         if api_key is None:
             api_key = os.environ.get("OPENAI_API_KEY")
         
@@ -136,7 +137,7 @@ class SoftwareAnalystAgent:
             raise ValueError("API key is required for SoftwareAnalystAgent")
         
         # Initialize the requirement context manager
-        self.req_context_manager = RequirementContextManager(persist_directory)
+        self.req_context_manager = RequirementContextManager(db_chroma)
         
         # Get the context provider
         self.context_provider = self.req_context_manager.get_context_provider()
@@ -152,6 +153,15 @@ class SoftwareAnalystAgent:
         )
         self.agent.register_context_provider("rag_context", self.context_provider)
     
+    def get_req_context_manager(self) -> RequirementContextManager:
+        """
+        Get the requirement context manager for the agent.
+        
+        Returns:
+            Requirement context manager for the agent
+        """
+        return self.req_context_manager
+
     def get_context_provider(self) -> SystemPromptContextProviderBase:
         """
         Get the context provider for the agent.
@@ -359,14 +369,14 @@ class SoftwareAnalystAgent:
 
 
 # Example usage
-if __name__ == "__main__":
-    api_key = os.environ.get("OPENAI_API_KEY")
-    analyst = SoftwareAnalystAgent(api_key)
+# if __name__ == "__main__":
+#     api_key = os.environ.get("OPENAI_API_KEY")
+#     analyst = SoftwareAnalystAgent(api_key)
     
-    # Option 1: Analyze from direct text input
-    requirement = "Implement a user authentication system with registration, login, password reset, and OAuth integration with Google and Facebook."
-    result = analyst.analyze_from_text(requirement)
-    analyst.print_analysis_results(result)
+#     # Option 1: Analyze from direct text input
+#     requirement = "Implement a user authentication system with registration, login, password reset, and OAuth integration with Google and Facebook."
+#     result = analyst.analyze_from_text(requirement)
+#     analyst.print_analysis_results(result)
     
     # Option 2: Analyze from a markdown file
     # Uncomment to use
