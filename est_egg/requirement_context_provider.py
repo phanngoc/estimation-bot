@@ -8,38 +8,30 @@ class RequirementContextProvider(SystemPromptContextProviderBase):
     Context provider that enhances the system prompt with relevant requirements from ChromaDB.
     """
     
-    def __init__(self, chroma_db_manager: ChromaDBManager, max_results: int = 5):
+    def __init__(self, title: str, chroma_db_manager: ChromaDBManager, max_results: int = 5):
         """
         Initialize the requirement context provider.
         
         Args:
+            title: Title of the context provider
             chroma_db_manager: ChromaDBManager instance for querying requirements
             max_results: Maximum number of relevant requirements to include
         """
+        super().__init__(title=title)
         self.chroma_db = chroma_db_manager
         self.max_results = max_results
-    
-    def get_info(self, current_input: Dict[str, Any]) -> str:
+        self.context_parts = ""
+
+    def update_context(self, query: str) -> Dict[str, Any]:
         """
-        Get context from ChromaDB based on the current input.
+        Update the context with the requirement query.
         
         Args:
-            current_input: Current input to the agent
-            
+            query: Requirement query
+        
         Returns:
-            Context as string to inject into the system prompt
+            Updated context
         """
-        query = ""
-        
-        # Extract query from input
-        if "requirement" in current_input and current_input["requirement"]:
-            query = current_input["requirement"]
-        elif "markdown_file_path" in current_input and current_input["markdown_file_path"]:
-            # Just use the filename as a query in this case
-            query = f"Requirements in file {current_input['markdown_file_path']}"
-        
-        if not query:
-            return "No historical requirements data available."
             
         # Get similar requirements from ChromaDB
         similar_requirements = self.chroma_db.query_similar_requirements(
@@ -47,6 +39,11 @@ class RequirementContextProvider(SystemPromptContextProviderBase):
             n_results=self.max_results
         )
         
+        # Log the retrieved similar requirements
+        print(f"Retrieved {len(similar_requirements)} similar requirements")
+        for i, req in enumerate(similar_requirements):
+            print(f"Requirement {i+1}: {req.get('content', '')[:50]}... | Score: {req.get('relevance_score', 'N/A')}")
+
         if not similar_requirements:
             return "No similar historical requirements found in the database."
         
@@ -60,7 +57,21 @@ class RequirementContextProvider(SystemPromptContextProviderBase):
             context_parts.append(f"{req['content']}")
             context_parts.append("")
         
-        return "\n".join(context_parts)
+        self.context_parts = "\n".join(context_parts)
+        return self.context_parts
+
+    def get_info(self) -> str:
+        """
+        Get context from ChromaDB based on the current input.
+        
+        Args:
+            current_input: Current input to the agent
+            
+        Returns:
+            Context as string to inject into the system prompt
+        """
+        print('get_info', self.context_parts)
+        return self.context_parts
 
 
 class RequirementContextManager:
@@ -76,7 +87,7 @@ class RequirementContextManager:
             persist_directory: Directory to persist ChromaDB data
         """
         self.chroma_db = ChromaDBManager(persist_directory)
-        self.context_provider = RequirementContextProvider(self.chroma_db)
+        self.context_provider = RequirementContextProvider("spec_file", self.chroma_db)
     
     def add_requirement(self, content: str, source: str) -> str:
         """

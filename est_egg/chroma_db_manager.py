@@ -3,7 +3,7 @@ import os
 import uuid
 from typing import List, Dict, Any, Optional
 import hashlib
-
+from est_egg.database_manager import DatabaseManager
 
 class ChromaDBManager:
     """
@@ -19,6 +19,7 @@ class ChromaDBManager:
         """
         if persist_directory:
             os.makedirs(persist_directory, exist_ok=True)
+            print('persist_directory:', persist_directory)
             self.client = chromadb.PersistentClient(path=persist_directory)
         else:
             self.client = chromadb.Client()
@@ -28,10 +29,13 @@ class ChromaDBManager:
             name="requirements_collection",
             metadata={"hnsw:space": "cosine"}
         )
+        
+        # Initialize SQLite database manager
+        self.db_manager = DatabaseManager()
     
     def add_requirement(self, content: str, source: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Add a requirement to the ChromaDB collection.
+        Add a requirement to the ChromaDB collection and SQLite.
         
         Args:
             content: The requirement content
@@ -51,19 +55,23 @@ class ChromaDBManager:
         metadata["source"] = source
         metadata["timestamp"] = str(uuid.uuid4())
         
-        # Add to collection
+        # Add to ChromaDB collection
         self.collection.add(
             documents=[content],
             metadatas=[metadata],
             ids=[doc_id]
         )
         
+        # Also save to SQLite
+        self.db_manager.save_requirements([doc_id], [content], source, [metadata])
+        
         return doc_id
     
     def add_multiple_requirements(self, contents: List[str], source: str, 
                                  metadatas: Optional[List[Dict[str, Any]]] = None) -> List[str]:
         """
-        Add multiple requirements to the ChromaDB collection.
+        Add multiple requirements to the ChromaDB collection and SQLite.
+        If documents with the same ID already exist, they will be updated.
         
         Args:
             contents: List of requirement contents
@@ -78,7 +86,7 @@ class ChromaDBManager:
         
         # Generate IDs and prepare metadata
         doc_ids = [hashlib.md5(content.encode()).hexdigest() for content in contents]
-        
+        print('add_multiple_requirements:doc_ids:', doc_ids)
         if metadatas is None:
             metadatas = [{} for _ in contents]
         
@@ -87,12 +95,56 @@ class ChromaDBManager:
             metadata["source"] = source
             metadata["timestamp"] = str(uuid.uuid4())
         
-        # Add to collection
-        self.collection.add(
-            documents=contents,
-            metadatas=metadatas,
-            ids=doc_ids
-        )
+        # Store in ChromaDB
+        try:
+            existing_ids = []
+            for doc_id in doc_ids:
+                try:
+                    # Try to get the document by ID
+                    self.collection.get(ids=[doc_id])
+                    existing_ids.append(doc_id)
+                except Exception:
+                    # ID doesn't exist
+                    pass
+            
+            # Separate documents into those to update and those to add
+            to_update = {i: (doc_ids[i], contents[i], metadatas[i]) 
+                        for i in range(len(doc_ids)) if doc_ids[i] in existing_ids}
+            to_add = {i: (doc_ids[i], contents[i], metadatas[i]) 
+                     for i in range(len(doc_ids)) if doc_ids[i] not in existing_ids}
+            
+            # Update existing documents
+            if to_update:
+                update_ids = [item[0] for item in to_update.values()]
+                update_docs = [item[1] for item in to_update.values()]
+                update_metas = [item[2] for item in to_update.values()]
+                self.collection.update(
+                    ids=update_ids,
+                    documents=update_docs,
+                    metadatas=update_metas
+                )
+            
+            # Add new documents
+            if to_add:
+                add_ids = [item[0] for item in to_add.values()]
+                add_docs = [item[1] for item in to_add.values()]
+                add_metas = [item[2] for item in to_add.values()]
+                self.collection.add(
+                    ids=add_ids,
+                    documents=add_docs,
+                    metadatas=add_metas
+                )
+        except Exception as e:
+            # Fallback to direct add with upsert if the above approach fails
+            print(f"Using fallback method for adding documents: {str(e)}")
+            self.collection.upsert(
+                documents=contents,
+                metadatas=metadatas,
+                ids=doc_ids
+            )
+        
+        # Also save to SQLite - will handle duplicates with INSERT OR REPLACE
+        self.db_manager.save_requirements(doc_ids, contents, source, metadatas)
         
         return doc_ids
     

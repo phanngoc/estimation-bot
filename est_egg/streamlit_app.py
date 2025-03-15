@@ -200,13 +200,8 @@ def save_uploaded_file(uploaded_file, upload_dir):
         
     return file_path
 
-def merge_requirements(text_requirement, uploaded_files):
+def extract_requirement_from_file(uploaded_files):
     """Merge requirements from text input and uploaded files"""
-    requirements = []
-    
-    # Add text requirement if provided
-    if text_requirement and text_requirement.strip():
-        requirements.append(text_requirement.strip())
     
     # Process uploaded files
     file_contents = []
@@ -224,12 +219,8 @@ def merge_requirements(text_requirement, uploaded_files):
             uploaded_file.seek(0)  # Reset file pointer after reading
             markdown_files.append(uploaded_file)
     
-    # Add file contents to requirements
-    if file_contents:
-        requirements.append("\n\n".join(file_contents))
-    
     # Return the merged requirements and separate Excel files
-    return "\n\n---\n\n".join(requirements), excel_files, markdown_files
+    return excel_files, markdown_files
 
 def display_development_components(components):
     """Render development components as markdown"""
@@ -585,13 +576,17 @@ def main():
                 st.session_state.uploaded_files = saved_files
                 
                 # Merge requirements from text and files
-                merged_text, excel_files, markdown_files = merge_requirements(requirement_text, uploaded_files)
+                excel_files, markdown_files = extract_requirement_from_file(uploaded_files)
                 
                 # Store file names for database
                 file_names = [file.name for file in uploaded_files] if uploaded_files else []
                 
+                if markdown_files:
+                    # Only Markdown files
+                    for markdown_file in markdown_files:
+                        analyst.index_from_markdown(markdown_file)
                 # Analyze from Excel files if present
-                if excel_files and not merged_text.strip() and not markdown_files:
+                if excel_files:
                     # Only Excel files
                     with tempfile.TemporaryDirectory() as temp_dir:
                         temp_files = []
@@ -603,22 +598,13 @@ def main():
                         
                         # Use first Excel file for now
                         if temp_files:
-                            results = analyst.analyze_from_excel(temp_files[0])
-                
-                elif merged_text.strip() and excel_files and not markdown_files:
-                    # Text and Excel input - analyze Excel first, then merge with text
-                    excel_results = []
-                    for excel_file in excel_files:
-                        result = analyst.analyze_from_excel_bytes(excel_file.getbuffer(), excel_file.name)
-                        excel_results.append(result.summary)
-                    
-                    # Combine Excel summaries with text input
-                    combined_req = merged_text + "\n\n" + "\n\n".join(excel_results)
-                    results = analyst.analyze_from_text(combined_req)
-                
-                else:
-                    # Text input or markdown files
-                    results = analyst.analyze_from_text(merged_text)
+                            analyst.index_from_excel(temp_files[0])
+                            
+
+                if requirement_text.strip():
+                    print('Start update context search:')
+                    analyst.get_context_provider().update_context(requirement_text)
+                    results = analyst.analyze_from_text(requirement_text)
                 
                 # Save results to session state
                 st.session_state.analysis_results = results

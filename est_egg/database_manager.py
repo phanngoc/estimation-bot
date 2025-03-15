@@ -42,6 +42,17 @@ class DatabaseManager:
         )
         ''')
         
+        # Create requirements table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS requirements (
+            id TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            metadata TEXT  -- JSON serialized metadata
+        )
+        ''')
+        
         conn.commit()
         conn.close()
     
@@ -193,3 +204,80 @@ class DatabaseManager:
         conn.close()
         
         return success
+
+    def save_requirements(self, doc_ids: List[str], contents: List[str], 
+                         source: str, metadatas: List[Dict[str, Any]]) -> bool:
+        """
+        Save requirements to the SQLite database.
+        
+        Args:
+            doc_ids: List of document IDs
+            contents: List of requirement contents
+            source: Source of the requirements
+            metadatas: List of metadata for each requirement
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            timestamp = datetime.datetime.now().isoformat()
+            
+            # Insert or replace requirements
+            for doc_id, content, metadata in zip(doc_ids, contents, metadatas):
+                cursor.execute('''
+                INSERT OR REPLACE INTO requirements (id, content, source, timestamp, metadata)
+                VALUES (?, ?, ?, ?, ?)
+                ''', (doc_id, content, source, timestamp, json.dumps(metadata)))
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error saving requirements to SQLite: {str(e)}")
+            return False
+
+    def get_requirements(self, source: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get requirements from the SQLite database.
+        
+        Args:
+            source: Optional filter by source
+            
+        Returns:
+            List of requirement records
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        if source:
+            cursor.execute('''
+            SELECT id, content, source, timestamp, metadata
+            FROM requirements
+            WHERE source = ?
+            ORDER BY timestamp DESC
+            ''', (source,))
+        else:
+            cursor.execute('''
+            SELECT id, content, source, timestamp, metadata
+            FROM requirements
+            ORDER BY timestamp DESC
+            ''')
+        
+        rows = cursor.fetchall()
+        
+        # Convert rows to dictionaries
+        requirements = []
+        for row in rows:
+            req = dict(row)
+            # Parse JSON metadata
+            if req['metadata']:
+                req['metadata'] = json.loads(req['metadata'])
+            requirements.append(req)
+        
+        conn.close()
+        
+        return requirements
