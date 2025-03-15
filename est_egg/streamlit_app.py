@@ -200,13 +200,8 @@ def save_uploaded_file(uploaded_file, upload_dir):
         
     return file_path
 
-def merge_requirements(text_requirement, uploaded_files):
+def extract_requirement_from_file(uploaded_files):
     """Merge requirements from text input and uploaded files"""
-    requirements = []
-    
-    # Add text requirement if provided
-    if text_requirement and text_requirement.strip():
-        requirements.append(text_requirement.strip())
     
     # Process uploaded files
     file_contents = []
@@ -224,12 +219,8 @@ def merge_requirements(text_requirement, uploaded_files):
             uploaded_file.seek(0)  # Reset file pointer after reading
             markdown_files.append(uploaded_file)
     
-    # Add file contents to requirements
-    if file_contents:
-        requirements.append("\n\n".join(file_contents))
-    
     # Return the merged requirements and separate Excel files
-    return "\n\n---\n\n".join(requirements), excel_files, markdown_files
+    return excel_files, markdown_files
 
 def display_development_components(components):
     """Render development components as markdown"""
@@ -585,7 +576,7 @@ def main():
                 st.session_state.uploaded_files = saved_files
                 
                 # Merge requirements from text and files
-                merged_text, excel_files, markdown_files = merge_requirements(requirement_text, uploaded_files)
+                excel_files, markdown_files = extract_requirement_from_file(uploaded_files)
                 
                 # Store file names for database
                 file_names = [file.name for file in uploaded_files] if uploaded_files else []
@@ -610,7 +601,9 @@ def main():
                             analyst.index_from_excel(temp_files[0])
                             
 
-                if merged_text.strip():
+                if requirement_text.strip():
+                    print('Start update context search:')
+                    analyst.get_context_provider().update_context(requirement_text)
                     results = analyst.analyze_from_text(requirement_text)
                 
                 # Save results to session state

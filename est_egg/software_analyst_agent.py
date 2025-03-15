@@ -148,10 +148,19 @@ class SoftwareAnalystAgent:
                 system_prompt_generator=system_prompt_generator,
                 input_schema=SoftwareAnalysisInputSchema,
                 output_schema=SoftwareAnalysisOutputSchema,
-                context_providers=[self.context_provider]  # Add the context provider here
             )
         )
+        self.agent.register_context_provider("rag_context", self.context_provider)
     
+    def get_context_provider(self) -> SystemPromptContextProviderBase:
+        """
+        Get the context provider for the agent.
+        
+        Returns:
+            Context provider for the agent
+        """
+        return self.context_provider
+
     def analyze_from_text(self, requirement_text: str) -> SoftwareAnalysisOutputSchema:
         """
         Analyze requirements from direct text input.
